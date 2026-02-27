@@ -1,8 +1,6 @@
-'use strict';
-
-const http = require('http');
-const https = require('https');
-const url = require('url');
+import http from 'http';
+import https from 'https';
+import url from 'url';
 
 // O código puxará as credenciais do painel do Render por segurança
 const UPSTREAM_URL = process.env.PROVIDER_URL || 'http://aguardando_configuracao';
@@ -22,13 +20,13 @@ const server = http.createServer((req, res) => {
     const path = parsedUrl.pathname;
     const clientHost = req.headers.host;
 
-    // Rota Healthcheck (Para confirmar se atualizou)
+    // Rota Healthcheck
     if (path === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ status: "Consysencia Online", engine: "BFF Pro v2.0" }));
+        return res.end(JSON.stringify({ status: "Consysencia Online", engine: "BFF Pro v2.1" }));
     }
 
-    // Proxy do Catálogo (Busca filmes e canais sem expor o fornecedor)
+    // Proxy do Catálogo
     if (path === '/catalog') {
         const action = parsedUrl.query.action || 'get_live_categories';
         const targetUrl = `${UPSTREAM_URL}/player_api.php?username=${UPSTREAM_USER}&password=${UPSTREAM_PASS}&action=${action}`;
@@ -59,7 +57,7 @@ function executeProxy(targetUrl, clientReq, clientRes, rewriteM3u8, clientHost, 
     
     protocol.get(targetUrl, {
         headers: {
-            'User-Agent': 'ConsysenciaPlay_Engine/2.0',
+            'User-Agent': 'ConsysenciaPlay_Engine/2.1',
             'Accept': '*/*'
         }
     }, (upstreamRes) => {
