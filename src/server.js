@@ -8,22 +8,23 @@ const app = express();
 app.use(compression());
 app.use(cors({ origin: '*' }));
 
-// Sinal de vida para o Render (evita o In Progress infinito)
+// Sinal de vida para o Render não desligar
 app.get('/health', (req, res) => res.sendStatus(200));
 
 // =========================================================
-// O ESPELHO HTTPS ABSOLUTO
-// Qualquer pedido para /proxy/live/... vai bater no Wolverine em http://...
+// ROTA VIP - SERVIDOR SECUNDÁRIO (ANTI-BLOQUEIO)
 // =========================================================
+const VIP_SERVER = 'http://ph1233.uk';
+
+// O Túnel de Vídeo: Converte HTTP para HTTPS e entrega para o celular
 app.use('/proxy', createProxyMiddleware({
-    target: 'http://playtvstreaming.shop',
+    target: VIP_SERVER,
     changeOrigin: true,
-    pathRewrite: {
-        '^/proxy': '', // Remove a palavra /proxy e repassa o resto do link
-    },
+    pathRewrite: { '^/proxy': '' },
     onProxyRes: function (proxyRes) {
-        // Engana o navegador para ele não bloquear o vídeo
+        // Escudo Anti-CORS (Garante que a TV não seja bloqueada)
         proxyRes.headers['Access-Control-Allow-Origin'] = '*';
+        proxyRes.headers['Access-Control-Allow-Headers'] = '*';
     }
 }));
 
@@ -38,16 +39,16 @@ app.get('/catalog', async (req, res) => {
     const b64auth = (authHeader || '').split(' ')[1] || '';
     const [user, pass] = Buffer.from(b64auth, 'base64').toString().split(':');
 
-    let targetUrl = `http://playtvstreaming.shop/player_api.php?username=${user}&password=${pass}&action=${action}`;
+    let targetUrl = `${VIP_SERVER}/player_api.php?username=${user}&password=${pass}&action=${action}`;
     if (series_id) targetUrl += `&series_id=${series_id}`;
 
     try {
-        const response = await axios.get(targetUrl, { timeout: 20000 });
+        const response = await axios.get(targetUrl, { timeout: 25000 });
         res.json(response.data);
     } catch (error) {
-        res.status(500).json({ error: "Falha na API." });
+        res.status(500).json({ error: "Falha na API VIP." });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Motor V5 Espelho online na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Motor V15 VIP online na porta ${PORT}`));
