@@ -2,82 +2,60 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const compression = require('compression');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
-
-// Otimiza a velocidade e libera o acesso do seu site
 app.use(compression());
 app.use(cors({ origin: '*' }));
 
-// =========================================================
-// 1. SINAL DE VIDA PARA O RENDER (Obrigatório para ficar Live)
-// =========================================================
-app.get('/health', (req, res) => {
-    res.sendStatus(200);
-});
+// Sinal de vida para o Render não desligar o motor
+app.get('/health', (req, res) => res.sendStatus(200));
 
 // =========================================================
-// 2. CONVERSOR MÁGICO (HTTP -> HTTPS)
-// Engana o navegador para ele não bloquear o vídeo
+// O TÚNEL DE VÍDEO DEFINITIVO (PROXY REVERSO DE ALTA PERFORMANCE)
+// Lida com .m3u8, .ts, .mp4 e headers de Range (para avançar o vídeo)
 // =========================================================
-app.get('/stream', async (req, res) => {
-    const { url } = req.query;
-    
-    if (!url) {
-        return res.status(400).send("URL ausente.");
+const streamProxyConfig = {
+    target: 'http://playtvstreaming.shop', // O servidor raiz do fornecedor
+    changeOrigin: true,
+    ws: true, // Suporte a WebSockets se necessário
+    followRedirects: true,
+    onProxyRes: function (proxyRes, req, res) {
+        // Oculta a origem insegura e engana o navegador do cliente
+        proxyRes.headers['Access-Control-Allow-Origin'] = '*';
+        proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS';
+        proxyRes.headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept, Range';
     }
+};
 
-    try {
-        const response = await axios({
-            method: 'get',
-            url: decodeURIComponent(url),
-            responseType: 'stream',
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-        });
-
-        // Repassa as informações do vídeo originais para o seu player
-        res.set(response.headers);
-        response.data.pipe(res);
-    } catch (e) {
-        console.error("[ERRO STREAM]", e.message);
-        res.status(500).send("Erro na retransmissão do vídeo.");
-    }
-});
+// Se o frontend pedir /stream_tunnel/live/..., o Render busca em http://playtvstreaming.shop/live/...
+app.use('/stream_tunnel', createProxyMiddleware({
+    ...streamProxyConfig,
+    pathRewrite: { '^/stream_tunnel': '' } // Limpa o prefixo antes de enviar pro Wolverine
+}));
 
 // =========================================================
-// 3. BUSCADOR DO CATÁLOGO (FILMES, SÉRIES E CANAIS)
+// O BUSCADOR DE CATÁLOGO (Metadados, Capas e Sinopses)
 // =========================================================
 app.get('/catalog', async (req, res) => {
     const { action, series_id } = req.query;
     const authHeader = req.headers.authorization;
-    
-    if (!authHeader) {
-        return res.status(401).json({ error: "Acesso Negado." });
-    }
+    if (!authHeader) return res.status(401).json({ error: "Acesso Negado." });
 
-    // Descriptografa o usuário e senha
     const b64auth = (authHeader || '').split(' ')[1] || '';
     const [user, pass] = Buffer.from(b64auth, 'base64').toString().split(':');
 
-    // Monta a URL para bater no servidor Wolverine
     let targetUrl = `http://playtvstreaming.shop/player_api.php?username=${user}&password=${pass}&action=${action}`;
-    if (series_id) {
-        targetUrl += `&series_id=${series_id}`;
-    }
+    if (series_id) targetUrl += `&series_id=${series_id}`;
 
     try {
-        const response = await axios.get(targetUrl, { timeout: 20000 });
+        const response = await axios.get(targetUrl, { timeout: 25000 });
         res.json(response.data);
     } catch (error) {
-        console.error("[ERRO CATALOGO]", error.message);
-        res.status(500).json({ error: "Falha ao buscar dados no servidor principal." });
+        console.error(`[ERRO API] ${action}:`, error.message);
+        res.status(500).json({ error: "Falha de comunicação com o cluster principal." });
     }
 });
 
-// =========================================================
-// LIGA O MOTOR NA PORTA CERTA DO RENDER
-// =========================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Motor Consysencia rodando firme na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Motor Consysencia rodando firme na porta ${PORT}`));
