@@ -6,30 +6,46 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
 
+/* =============================
+   MIDDLEWARES BASE
+============================= */
+
 app.use(compression());
 app.use(cors({ origin: '*' }));
-app.use(express.json());
-
-// Responder preflight corretamente
+app.use(express.json({ limit: '1mb' }));
 app.options('*', cors());
 
-// Health check
-app.get('/health', (req, res) => res.sendStatus(200));
+/* =============================
+   HEALTH CHECK
+============================= */
 
-/* =========================================================
-   PROXY DE STREAM
-========================================================= */
+app.get('/health', (req, res) => {
+    res.status(200).json({ ok: true });
+});
+
+/* =============================
+   STREAM PROXY
+============================= */
 
 const streamProxyConfig = {
     target: 'http://playtvstreaming.shop',
     changeOrigin: true,
     ws: true,
     followRedirects: true,
-    onProxyRes: function (proxyRes, req, res) {
+    proxyTimeout: 30000,
+    timeout: 30000,
+    onProxyReq: (proxyReq) => {
+        proxyReq.setHeader('Connection', 'keep-alive');
+    },
+    onProxyRes: (proxyRes) => {
         proxyRes.headers['Access-Control-Allow-Origin'] = '*';
         proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS';
         proxyRes.headers['Access-Control-Allow-Headers'] =
             'Origin, X-Requested-With, Content-Type, Accept, Range';
+    },
+    onError: (err, req, res) => {
+        console.error('Proxy Error:', err.message);
+        res.status(502).json({ error: 'Erro no túnel de stream.' });
     }
 };
 
@@ -40,9 +56,9 @@ app.use('/stream_tunnel',
     })
 );
 
-/* =========================================================
+/* =============================
    CATÁLOGO
-========================================================= */
+============================= */
 
 app.get('/catalog', async (req, res) => {
     try {
@@ -58,35 +74,58 @@ app.get('/catalog', async (req, res) => {
             .toString()
             .split(':');
 
-        let targetUrl = `http://playtvstreaming.shop/player_api.php?username=${user}&password=${pass}&action=${action}`;
+        if (!user || !pass) {
+            return res.status(400).json({ error: "Credenciais inválidas." });
+        }
+
+        let targetUrl =
+            `http://playtvstreaming.shop/player_api.php?username=${user}&password=${pass}&action=${action}`;
 
         if (series_id) {
             targetUrl += `&series_id=${series_id}`;
         }
 
-        const response = await axios.get(targetUrl, { timeout: 25000 });
+        const response = await axios.get(targetUrl, {
+            timeout: 25000
+        });
 
         res.json(response.data);
 
     } catch (error) {
-        console.error(`[ERRO API]`, error.message);
+        console.error('Catalog Error:', error.message);
         res.status(500).json({
             error: "Falha de comunicação com o cluster principal."
         });
     }
 });
 
-/* =========================================================
+/* =============================
    ERROR HANDLER GLOBAL
-========================================================= */
+============================= */
 
 app.use((err, req, res, next) => {
-    console.error("Erro global:", err);
-    res.status(500).json({ error: "Erro interno do servidor." });
+    console.error('Erro global:', err.stack);
+    res.status(500).json({ error: 'Erro interno do servidor.' });
 });
+
+/* =============================
+   PROTEÇÃO CONTRA CRASH
+============================= */
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (err) => {
+    console.error('Unhandled Rejection:', err);
+});
+
+/* =============================
+   START SERVER
+============================= */
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () =>
-    console.log(`🚀 Motor Consysencia rodando na porta ${PORT}`)
-);
+app.listen(PORT, () => {
+    console.log(`🚀 Motor Consysencia rodando na porta ${PORT}`);
+});
