@@ -5,127 +5,49 @@ const compression = require('compression');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
-
-/* =============================
-   MIDDLEWARES BASE
-============================= */
-
 app.use(compression());
 app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '1mb' }));
-app.options('*', cors());
 
-/* =============================
-   HEALTH CHECK
-============================= */
+// Sinal de vida para o Render (evita o In Progress infinito)
+app.get('/health', (req, res) => res.sendStatus(200));
 
-app.get('/health', (req, res) => {
-    res.status(200).json({ ok: true });
-});
-
-/* =============================
-   STREAM PROXY
-============================= */
-
-const streamProxyConfig = {
+// =========================================================
+// O ESPELHO HTTPS ABSOLUTO
+// Qualquer pedido para /proxy/live/... vai bater no Wolverine em http://...
+// =========================================================
+app.use('/proxy', createProxyMiddleware({
     target: 'http://playtvstreaming.shop',
     changeOrigin: true,
-    ws: true,
-    followRedirects: true,
-    proxyTimeout: 30000,
-    timeout: 30000,
-    onProxyReq: (proxyReq) => {
-        proxyReq.setHeader('Connection', 'keep-alive');
+    pathRewrite: {
+        '^/proxy': '', // Remove a palavra /proxy e repassa o resto do link
     },
-    onProxyRes: (proxyRes) => {
+    onProxyRes: function (proxyRes) {
+        // Engana o navegador para ele não bloquear o vídeo
         proxyRes.headers['Access-Control-Allow-Origin'] = '*';
-        proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS';
-        proxyRes.headers['Access-Control-Allow-Headers'] =
-            'Origin, X-Requested-With, Content-Type, Accept, Range';
-    },
-    onError: (err, req, res) => {
-        console.error('Proxy Error:', err.message);
-        res.status(502).json({ error: 'Erro no túnel de stream.' });
     }
-};
+}));
 
-app.use('/stream_tunnel',
-    createProxyMiddleware({
-        ...streamProxyConfig,
-        pathRewrite: { '^/stream_tunnel': '' }
-    })
-);
-
-/* =============================
-   CATÁLOGO
-============================= */
-
+// =========================================================
+// BUSCADOR DE CATÁLOGO
+// =========================================================
 app.get('/catalog', async (req, res) => {
+    const { action, series_id } = req.query;
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Negado." });
+
+    const b64auth = (authHeader || '').split(' ')[1] || '';
+    const [user, pass] = Buffer.from(b64auth, 'base64').toString().split(':');
+
+    let targetUrl = `http://playtvstreaming.shop/player_api.php?username=${user}&password=${pass}&action=${action}`;
+    if (series_id) targetUrl += `&series_id=${series_id}`;
+
     try {
-        const { action, series_id } = req.query;
-        const authHeader = req.headers.authorization;
-
-        if (!authHeader) {
-            return res.status(401).json({ error: "Acesso Negado." });
-        }
-
-        const b64auth = authHeader.split(' ')[1] || '';
-        const [user, pass] = Buffer.from(b64auth, 'base64')
-            .toString()
-            .split(':');
-
-        if (!user || !pass) {
-            return res.status(400).json({ error: "Credenciais inválidas." });
-        }
-
-        let targetUrl =
-            `http://playtvstreaming.shop/player_api.php?username=${user}&password=${pass}&action=${action}`;
-
-        if (series_id) {
-            targetUrl += `&series_id=${series_id}`;
-        }
-
-        const response = await axios.get(targetUrl, {
-            timeout: 25000
-        });
-
+        const response = await axios.get(targetUrl, { timeout: 20000 });
         res.json(response.data);
-
     } catch (error) {
-        console.error('Catalog Error:', error.message);
-        res.status(500).json({
-            error: "Falha de comunicação com o cluster principal."
-        });
+        res.status(500).json({ error: "Falha na API." });
     }
 });
-
-/* =============================
-   ERROR HANDLER GLOBAL
-============================= */
-
-app.use((err, req, res, next) => {
-    console.error('Erro global:', err.stack);
-    res.status(500).json({ error: 'Erro interno do servidor.' });
-});
-
-/* =============================
-   PROTEÇÃO CONTRA CRASH
-============================= */
-
-process.on('uncaughtException', (err) => {
-    console.error('Uncaught Exception:', err);
-});
-
-process.on('unhandledRejection', (err) => {
-    console.error('Unhandled Rejection:', err);
-});
-
-/* =============================
-   START SERVER
-============================= */
 
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-    console.log(`🚀 Motor Consysencia rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Motor V5 Espelho online na porta ${PORT}`));
